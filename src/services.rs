@@ -3,27 +3,17 @@ use actix_web::{
     web::{Data, Json, Path},
     Responder, HttpResponse,
 };
-use serde::{ Serialize, Deserialize};
-use sqlx::{self, FromRow};
-use crate::{utils, AppState};
+use sqlx::{self, Row};
+use crate::{entities, utils, AppState};
 use utils::log_with_colors;
-
-#[derive(Serialize, Deserialize, FromRow)]
-struct Article{
-    id : i32,
-    title: String,
-    description:String,
-    md_filename:String,
-    photo_filename:String,
-}
-
+use entities::{ArticleEntity, ArticleCreateRequest};
 
 #[get("/articles")]
 pub async fn fetch_all_articles(state : Data<AppState>) -> impl Responder {
 
     //"GET /articles".to_string()
 
-    match sqlx::query_as::<_, Article>(
+    match sqlx::query_as::<_, ArticleEntity>(
         "SELECT * FROM articles"
     )
         .fetch_all(&state.db)
@@ -47,7 +37,7 @@ pub async fn fetch_article(
     id: Path<i32>
 ) -> impl Responder {
 
-    match sqlx::query_as::<_, Article>(
+    match sqlx::query_as::<_, ArticleEntity>(
         "SELECT * FROM articles WHERE id = $1"
     )
         .bind(id.into_inner())  // Bind the path parameter to the query
@@ -59,42 +49,71 @@ pub async fn fetch_article(
     }
 }
 
-
-//Todo This function here is for testing purposes only. This means that it needs to be changed
-// for the desired outcome
-
 #[post("/articles")]
 pub async fn create_article(
     state: Data<AppState>,
-    new_article: Json<Article>
+    new_article: Json<ArticleCreateRequest>
 ) -> impl Responder {
-
-    let article = new_article.into_inner();
-
+    // Insert the article into the database
     match sqlx::query(
-        "INSERT INTO articles (title, description, md_filename, photo_filename) VALUES ($1, $2, $3, $4)"
+        r#"
+        INSERT INTO articles (title, description, article_type)
+        VALUES ($1, $2, $3)
+        RETURNING id
+        "#
     )
-        .bind(&article.title)
-        .bind(&article.description)
-        .bind(&article.md_filename)
-        .bind(&article.photo_filename)
-        .execute(&state.db)
+        .bind(&new_article.title)
+        .bind(&new_article.description)
+        .bind(new_article.article_type)
+        .fetch_one(&state.db)
         .await
     {
-        Ok(_) => HttpResponse::Created().body("Article created successfully"),
-        Err(_) => HttpResponse::InternalServerError().body("Failed to create article"),
+        Ok(record) => {
+            let id: i32 = record.try_get("id").unwrap();
+
+            // Create the ArticleEntity instance with the generated ID
+            let article = ArticleEntity {
+                id,
+                title: new_article.title.clone(),
+                description: new_article.description.clone(),
+                md_filename: format!("{}.md", id), // Generated filename
+                photo_filename: format!("{}.jpg", id), // Generated filename
+                article_type: new_article.article_type,
+            };
+
+            // Update the article if needed (this may be optional)
+            match sqlx::query(
+                r#"
+                UPDATE articles
+                SET md_filename = $1, photo_filename = $2
+                WHERE id = $3
+                "#
+            )
+                .bind(&article.md_filename) // Use generated filename
+                .bind(&article.photo_filename) // Use generated filename
+                .bind(id)
+                .execute(&state.db)
+                .await
+            {
+                Ok(_) => {
+                    log_with_colors("INFO", "POST 200 /articles");
+                    HttpResponse::Created().json(article)
+                }, // Respond with the created article
+                Err(_) => {
+                    log_with_colors("WARN", "POST 404 /articles - Article title and description added, failed to add md and photo filename");
+                    HttpResponse::InternalServerError().body("Failed to update article filenames")
+                }, // Handle update error
+            }
+        },
+        Err(_) => HttpResponse::InternalServerError().body("Failed to create article"), // Handle insert error
     }
 }
-
-
-//Todo This function here is for testing purposes only. This means that it needs to be changed for
-// the desired outcome
 
 #[put("/articles/{id}")]
 pub async fn update_article(
     state: Data<AppState>,
     id: Path<i32>,
-    updated_article: Json<Article>
+    updated_article: Json<ArticleEntity>
 ) -> impl Responder {
 
     let article = updated_article.into_inner();
@@ -110,15 +129,20 @@ pub async fn update_article(
         .execute(&state.db)
         .await
     {
-        Ok(result) if result.rows_affected() > 0 => HttpResponse::Ok().body("Article updated successfully"),
-        Ok(_) => HttpResponse::NotFound().body("Article not found"),
-        Err(_) => HttpResponse::InternalServerError().body("Failed to update article"),
+        Ok(result) if result.rows_affected() > 0 => {
+            log_with_colors("INFO", "PUT 200 /article");
+            HttpResponse::Ok().body("Article updated successfully")
+        },
+        Ok(_) => {
+            log_with_colors("WARN", "PUT 404 /article");
+            HttpResponse::NotFound().body("Article not found")
+        },
+        Err(_) => {
+            log_with_colors("ERROR", "PUT 500 /article");
+            HttpResponse::InternalServerError().body("Failed to update article")
+        },
     }
 }
-
-
-//This function here is for testing purposes only. This means that it needs to be changed for
-//the desired outcome
 
 #[delete("/articles/{id}")]
 pub async fn delete_article(
@@ -133,8 +157,17 @@ pub async fn delete_article(
         .execute(&state.db)
         .await
     {
-        Ok(result) if result.rows_affected() > 0 => HttpResponse::Ok().body("Article deleted successfully"),
-        Ok(_) => HttpResponse::NotFound().body("Article not found"),
-        Err(_) => HttpResponse::InternalServerError().body("Failed to delete article"),
+        Ok(result) if result.rows_affected() > 0 => {
+            log_with_colors("INFO", "DELETE 200 /article");
+            HttpResponse::Ok().body("Article deleted successfully")
+        },
+        Ok(_) => {
+            log_with_colors("WARN", "DELETE 404 /article");
+            HttpResponse::NotFound().body("Article not found")
+        },
+        Err(_) => {
+            log_with_colors("ERROR", "DELETE 500 /article");
+            HttpResponse::InternalServerError().body("Failed to delete article")
+        },
     }
 }

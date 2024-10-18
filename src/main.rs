@@ -1,11 +1,14 @@
 mod services;
 mod utils;
+mod entities;
+mod enums;
 
 use actix_web::{App, HttpServer, web::Data};
 use dotenv::dotenv;
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 use services::{fetch_all_articles, fetch_article, create_article, update_article, delete_article};
 use colored::*;
+use crate::utils::log_with_colors;
 
 pub struct AppState {
     db: Pool<Postgres>,
@@ -22,6 +25,13 @@ async fn main() -> std::io::Result<()> {
         .connect(&database_url)
         .await
         .expect("Failed to create pool");
+
+    sqlx::migrate!("./migrations") // Path to your migrations directory
+        .run(&pool)
+        .await
+        .expect("Failed to run migrations");
+
+    log_with_colors("INFO", "Database migrations added successfully");
 
     println!(
         "{}", r#"
