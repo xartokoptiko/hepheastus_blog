@@ -9,13 +9,13 @@ use crate::{entities, utils, AppState};
 use utils::{log_with_colors, read_file_contents, read_photo_as_base64};
 use entities::{ArticleEntity, ArticleCreateRequest, ArticleResponse};
 use futures_util::stream::StreamExt;
-use serde_json; // Ensure you have this for JSON handling
+use serde_json;
 use sqlx::Error as SqlxError;
 use std::fs::metadata;
 
 
 #[get("/articles")]
-pub async fn fetch_all_articles(state : Data<AppState>) -> impl Responder {
+pub async fn fetch_all_articles(state: Data<AppState>) -> impl Responder {
 
     //"GET /articles".to_string()
 
@@ -28,20 +28,19 @@ pub async fn fetch_all_articles(state : Data<AppState>) -> impl Responder {
         Ok(articles) => {
             log_with_colors("INFO", "GET 200 /articles");
             HttpResponse::Ok().json(articles)
-        },
+        }
         Err(e) => {
             log_with_colors("ERROR", &format!("Database query failed: {}", e));
             log_with_colors("WARN", "GET 404 /articles");
             HttpResponse::NotFound().body("No Articles found")
         }
     }
-
 }
 
 #[get("/articles/{id}")]
 pub async fn fetch_article(
     state: Data<AppState>,
-    id: Path<i32>
+    id: Path<i32>,
 ) -> impl Responder {
     // Fetch the article from the database
     match sqlx::query_as::<_, ArticleEntity>(
@@ -52,20 +51,23 @@ pub async fn fetch_article(
         .await
     {
         Ok(article) => {
-            // Construct file paths for markdown and photo
-            let md_file_path = format!("/home/labros/hephaestus-blog/articles/{}/{}.md", article.id, article.id);
-            let photo_file_path = format!("/home/labros/hephaestus-blog/articles/{}/{}.jpg", article.id, article.id);
+            // Construct file paths for markdown and photo// Get the home directory dynamically
+            let home_dir = home::home_dir().expect("Failed to get home directory");
+            let md_file_path = home_dir.join(format!("hephaestus-blog/articles/{}/{}.md", article.id, article.id));
+            let photo_file_path = home_dir.join(format!("hephaestus-blog/articles/{}/{}.jpg", article.id, article.id));
+
+            // Convert PathBuf to &str
+            let md_file_path_str = md_file_path.to_str().expect("Failed to convert markdown file path to string");
+            let photo_file_path_str = photo_file_path.to_str().expect("Failed to convert photo file path to string");
 
             // Read the markdown file contents
-            let md_contents = read_file_contents(&md_file_path).unwrap_or_else(|e| {
-                log::error!("Failed to read markdown file: {}", e);
+            let md_contents = read_file_contents(&md_file_path_str).unwrap_or_else(|e| {
                 log_with_colors("ERROR", &format!("Failed to read markdown file: {}", e));
                 String::new() // Return an empty string or handle error as needed
             });
 
             // Read the photo file contents (as base64 string for JSON response)
-            let photo_contents = read_photo_as_base64(&photo_file_path).unwrap_or_else(|e| {
-                log::error!("Failed to read photo file: {}", e);
+            let photo_contents = read_photo_as_base64(&photo_file_path_str).unwrap_or_else(|e| {
                 log_with_colors("ERROR", &format!("Failed to read photo file: {}", e));
                 String::new() // Return an empty string or handle error as needed
             });
@@ -77,9 +79,13 @@ pub async fn fetch_article(
                 photo_contents,
             };
 
+            log_with_colors("INFO", "GET 200 articles/{id}");
             HttpResponse::Ok().json(response)
-        },
-        Err(_) => HttpResponse::NotFound().body("Article not found")
+        }
+        Err(_) => {
+            log_with_colors("WARN", "GET 404 /articles/{id}");
+            HttpResponse::NotFound().body("Article not found")
+        }
     }
 }
 
@@ -130,7 +136,7 @@ pub async fn create_article(
 
     // Ensure the new_article is populated before proceeding
     let new_article = new_article.ok_or_else(|| {
-        log::error!("Missing article data");
+        log_with_colors("WARN", "POST 404 articles - Missing article data");
         actix_web::error::ErrorBadRequest("Missing article data")
     })?;
 
@@ -149,13 +155,15 @@ pub async fn create_article(
         .await {
         Ok(record) => record.try_get::<i32, _>("id").unwrap(),
         Err(e) => {
-            log::error!("Failed to create article: {}", e);
+            log_with_colors("ERROR", &format!("Failed to create article: {}", e));
             return Ok(HttpResponse::InternalServerError().body("Failed to create article"));
         }
     };
 
     // Create the upload directory
-    let upload_dir = format!("/home/labros/hephaestus-blog/articles/{}", id);
+    let home_dir = home::home_dir().expect("Failed to get home directory");
+    let upload_dir_buf = home_dir.join("upload");
+    let upload_dir = upload_dir_buf.to_str().expect("Failed to convert upload dir to string");
     create_dir_all(&upload_dir).map_err(|e| {
         log_with_colors("ERROR", &format!("Failed to create upload directory: {}", e));
         actix_web::error::ErrorInternalServerError("Failed to create upload directory")
@@ -165,11 +173,11 @@ pub async fn create_article(
     if let Some(content) = markdown_content {
         let md_file_path = format!("{}/{}.md", upload_dir, id);
         let mut file = File::create(&md_file_path).map_err(|e| {
-            log::error!("Failed to create markdown file: {}", e);
+            log_with_colors("ERROR", &format!("Failed to create markdown file: {}", e));
             actix_web::error::ErrorInternalServerError("Failed to create markdown file")
         })?;
         file.write_all(content.as_bytes()).map_err(|e| {
-            log::error!("Failed to write to markdown file: {}", e);
+            log_with_colors("ERROR", &format!("Failed to write markdown file: {}", e));
             actix_web::error::ErrorInternalServerError("Failed to write to markdown file")
         })?;
     }
@@ -178,11 +186,11 @@ pub async fn create_article(
     if let Some(photo_bytes) = photo_data {
         let photo_file_path = format!("{}/{}.jpg", upload_dir, id);
         let mut file = File::create(&photo_file_path).map_err(|e| {
-            log::error!("Failed to create photo file: {}", e);
+            log_with_colors("ERROR", &format!("Failed to create photo file: {}", e));
             actix_web::error::ErrorInternalServerError("Failed to create photo file")
         })?;
         file.write_all(&photo_bytes).map_err(|e| {
-            log::error!("Failed to write to photo file: {}", e);
+            log_with_colors("ERROR", &format!("Failed to write photo file: {}", e));
             actix_web::error::ErrorInternalServerError("Failed to write to photo file")
         })?;
     }
@@ -213,24 +221,22 @@ pub async fn create_article(
         Ok(_) => {
             log_with_colors("INFO", "POST 200 /articles");
             Ok(HttpResponse::Created().json(article))
-        },
+        }
         Err(e) => {
-            log::error!("Failed to update article filenames: {}", e);
             log_with_colors("WARN", "POST 404 /articles - Article title and description added, failed to add md and photo filename");
             Ok(HttpResponse::InternalServerError().body("Failed to update article filenames"))
-        },
+        }
     }
 }
 
 
-
+//TODO NEEDS TESTING
 #[put("/articles/{id}")]
 pub async fn update_article(
     state: Data<AppState>,
     id: Path<i32>,
-    updated_article: Json<ArticleEntity>
+    updated_article: Json<ArticleEntity>,
 ) -> impl Responder {
-
     let article = updated_article.into_inner();
 
     match sqlx::query(
@@ -247,24 +253,25 @@ pub async fn update_article(
         Ok(result) if result.rows_affected() > 0 => {
             log_with_colors("INFO", "PUT 200 /article");
             HttpResponse::Ok().body("Article updated successfully")
-        },
+        }
         Ok(_) => {
             log_with_colors("WARN", "PUT 404 /article");
             HttpResponse::NotFound().body("Article not found")
-        },
+        }
         Err(_) => {
             log_with_colors("ERROR", "PUT 500 /article");
             HttpResponse::InternalServerError().body("Failed to update article")
-        },
+        }
     }
 }
 
+
+//TODO NEED TO DELETE THE FILES AS WELL AND NEEDS TESTING
 #[delete("/articles/{id}")]
 pub async fn delete_article(
     state: Data<AppState>,
-    id: Path<i32>
+    id: Path<i32>,
 ) -> impl Responder {
-
     match sqlx::query(
         "DELETE FROM articles WHERE id = $1"
     )
@@ -275,14 +282,14 @@ pub async fn delete_article(
         Ok(result) if result.rows_affected() > 0 => {
             log_with_colors("INFO", "DELETE 200 /article");
             HttpResponse::Ok().body("Article deleted successfully")
-        },
+        }
         Ok(_) => {
             log_with_colors("WARN", "DELETE 404 /article");
             HttpResponse::NotFound().body("Article not found")
-        },
+        }
         Err(_) => {
             log_with_colors("ERROR", "DELETE 500 /article");
             HttpResponse::InternalServerError().body("Failed to delete article")
-        },
+        }
     }
 }
