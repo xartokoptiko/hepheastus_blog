@@ -22,6 +22,13 @@ pub struct Article {
     article_type: ArticleType
 }
 
+#[derive(Serialize)]
+pub struct ArticleResponse {
+    pub(crate) article: ArticleEntity,
+    pub(crate) md_contents: String,
+    pub(crate) photo_contents: String, // Base64 encoded photo
+}
+
 impl From<ArticleEntity> for Article {
     fn from(entity: ArticleEntity) -> Self {
         Article {
