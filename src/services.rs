@@ -1,7 +1,5 @@
-use std::fmt::format;
 use std::fs::{create_dir_all, File};
 use std::io::Write;
-use std::path::PathBuf;
 use actix_multipart::Multipart;
 use actix_web::{get, post, put, delete, web::{Data, Json, Path}, Responder, HttpResponse, Error};
 use sqlx::{self, Row};
@@ -10,8 +8,6 @@ use utils::{log_with_colors, read_file_contents, read_photo_as_base64};
 use entities::{ArticleEntity, ArticleCreateRequest, ArticleResponse};
 use futures_util::stream::StreamExt;
 use serde_json;
-use sqlx::Error as SqlxError;
-use std::fs::metadata;
 
 
 #[get("/articles")]
