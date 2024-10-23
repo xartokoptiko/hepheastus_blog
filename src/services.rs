@@ -2,15 +2,17 @@ use std::fs::{create_dir_all, File};
 use std::io::Write;
 use actix_multipart::Multipart;
 use actix_web::{get, post, put, delete, web::{Data, Json, Path}, Responder, HttpResponse, Error};
+use bcrypt::{hash, verify, DEFAULT_COST};
 use sqlx::{self, Row};
 use crate::{entities, utils, AppState};
 use utils::{log_with_colors, read_file_contents, read_photo_as_base64};
-use entities::{ArticleEntity, ArticleCreateRequest, ArticleResponse};
+use entities::{ArticleEntity, ArticleCreateRequest, ArticleResponse, LoginRequest, User};
 use futures_util::stream::StreamExt;
 use serde_json;
+use crate::entities::SignupRequest;
+use crate::utils::generate_jwt;
 
-
-#[get("/articles")]
+//#[get("/articles")]
 pub async fn fetch_all_articles(state: Data<AppState>) -> impl Responder {
 
     //"GET /articles".to_string()
@@ -33,7 +35,7 @@ pub async fn fetch_all_articles(state: Data<AppState>) -> impl Responder {
     }
 }
 
-#[get("/articles/{id}")]
+//#[get("/articles/{id}")]
 pub async fn fetch_article(
     state: Data<AppState>,
     id: Path<i32>,
@@ -85,7 +87,7 @@ pub async fn fetch_article(
     }
 }
 
-#[post("/articles")]
+//#[post("/articles")]
 pub async fn create_article(
     state: Data<AppState>,
     mut payload: Multipart,
@@ -227,7 +229,7 @@ pub async fn create_article(
 
 
 //TODO NEEDS TESTING
-#[put("/articles/{id}")]
+//#[put("/articles/{id}")]
 pub async fn update_article(
     state: Data<AppState>,
     id: Path<i32>,
@@ -263,7 +265,7 @@ pub async fn update_article(
 
 
 //TODO NEED TO DELETE THE FILES AS WELL AND NEEDS TESTING
-#[delete("/articles/{id}")]
+//#[delete("/articles/{id}")]
 pub async fn delete_article(
     state: Data<AppState>,
     id: Path<i32>,
@@ -288,4 +290,53 @@ pub async fn delete_article(
             HttpResponse::InternalServerError().body("Failed to delete article")
         }
     }
+}
+
+
+// LOGIN SERVICES
+pub async fn login(db_pool: Data<AppState>, data: Json<LoginRequest>) -> impl Responder {
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1")
+        .bind(&data.email)
+        .fetch_optional(&db_pool.db)  // Use &db_pool.db to get the actual connection pool
+        .await
+        .unwrap();  // Handle errors appropriately in production
+
+    if let Some(user) = user {
+        let password_matches = verify(&data.password, &user.password_hash).unwrap(); // Verifies hashed password
+
+        if password_matches {
+            let token = generate_jwt(&user.email).unwrap();  // Generate a JWT token
+            return HttpResponse::Ok().json(serde_json::json!({ "token": token }));  // Return the token as a JSON response
+        }
+    }
+
+    // If authentication fails, return unauthorized
+    HttpResponse::Unauthorized().finish()
+}
+
+pub async fn signup(db_pool: Data<AppState>, data: Json<SignupRequest>) -> impl Responder {
+    // Check if the user already exists
+    let user_exists = sqlx::query("SELECT 1 FROM users WHERE email = $1")
+        .bind(&data.email)
+        .fetch_optional(&db_pool.db)
+        .await
+        .unwrap()
+        .is_some();
+
+    if user_exists {
+        return HttpResponse::BadRequest().body("User already exists");
+    }
+
+    // Hash the password
+    let hashed_password = hash(&data.password, DEFAULT_COST).unwrap();
+
+    // Insert the new user into the database
+    sqlx::query("INSERT INTO users (email, password_hash) VALUES ($1, $2)")
+        .bind(&data.email)
+        .bind(&hashed_password)
+        .execute(&db_pool.db)
+        .await
+        .unwrap();
+
+    HttpResponse::Ok().body("User created")
 }

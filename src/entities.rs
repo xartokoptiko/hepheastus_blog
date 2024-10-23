@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use crate::enums::ArticleType;
 
+
+//ARTICLE STRUCTS
+
 #[derive(Serialize, Deserialize, FromRow)]
 pub struct ArticleEntity {
     pub(crate) id : i32,
@@ -65,3 +68,40 @@ pub struct ArticleCreateRequest{
     pub(crate) description:String,
     pub(crate) article_type:i32
 }
+
+
+// CLAIM STRUCTS
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Claims {
+    pub(crate) sub: String,
+    pub(crate) exp: usize,
+}
+
+
+
+// LOGIN-USER STRUCTS
+
+
+#[derive(Deserialize)]
+pub struct LoginRequest {
+    pub(crate) email: String,
+    pub(crate) password: String,
+}
+
+#[derive(Serialize, FromRow)]
+pub struct User {
+    pub(crate) id: i32,
+    pub(crate) email: String,
+    pub(crate) password_hash: String,
+}
+
+#[derive(Deserialize)]
+pub struct SignupRequest {
+    pub(crate) email: String,
+    pub(crate) password: String,
+}
+
+
+
+
